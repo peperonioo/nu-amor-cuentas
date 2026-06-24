@@ -115,6 +115,37 @@
   .lnk{background:none;border:none;color:var(--dim);font-size:12.5px;cursor:pointer;font-family:inherit;padding:6px 4px}
   .lnk:hover{color:var(--lime)}
   .backup .sep{color:#3a3a3a}
+
+  /* ——— vida / micro-animaciones (misma paleta, sin tocar el diseño) ——— */
+  @keyframes cardIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  @keyframes bodyIn{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}
+  @keyframes dlgIn{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:none}}
+  @keyframes bdIn{from{opacity:0}to{opacity:1}}
+  @keyframes flashGlow{0%{box-shadow:0 0 0 0 rgba(204,255,0,0)}25%{box-shadow:0 0 0 2px rgba(204,255,0,.45)}100%{box-shadow:0 0 0 0 rgba(204,255,0,0)}}
+  @keyframes riseIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  header{animation:riseIn .4s ease both}
+  .card.expanded .body{animation:bodyIn .2s ease both}
+  .card.flash{animation:flashGlow .7s ease}
+  /* el botón lima late un pelín al pulsar */
+  .btn{transition:transform .09s ease, filter .15s ease}
+  .btn:hover{filter:brightness(1.06)}
+  .stat{transition:transform .15s ease, border-color .15s ease}
+  .lnk,.quick,.btn.ghost,.edit-btn,.pay-del,.chev{transition:color .16s ease, border-color .16s ease, transform .16s ease}
+  .progress > div{will-change:width}
+  /* lift sólo en dispositivos con cursor (no en táctil) */
+  @media (hover:hover){
+    .card{transition:transform .18s ease, border-color .18s ease}
+    .card:hover{transform:translateY(-2px);border-color:#3f3f3f}
+    .stat:hover{transform:translateY(-2px);border-color:#3f3f3f}
+  }
+  dialog[open]{animation:dlgIn .24s cubic-bezier(.2,.7,.3,1) both}
+  dialog[open]::backdrop{animation:bdIn .24s ease both}
+
+  /* accesibilidad: respeta a quien desactiva el movimiento */
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important}
+  }
 </style>
 </head>
 <body>
@@ -168,8 +199,18 @@
 
 <script>
 let entries = [];
+let introMode = false; // entrada escalonada solo en la primera carga
 const dlgSale = document.getElementById("dlgSale");
 const dlgDebt = document.getElementById("dlgDebt");
+
+// estilo inline para la animación de entrada (escalonada) — vacío fuera del intro
+const inAnim = i => introMode ? ` style="animation:cardIn .38s cubic-bezier(.2,.7,.3,1) both;animation-delay:${Math.min(i,9)*45}ms"` : "";
+// "latido" de feedback en una tarjeta tras registrar un cobro/pago
+function pulse(id){
+  const el=document.querySelector('[data-id="'+id+'"]');
+  if(!el) return;
+  el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
+}
 
 const fmt = n => Math.round(n).toLocaleString("en-AU");
 const today = () => new Date().toISOString().slice(0,10);
@@ -234,7 +275,7 @@ function load(){
   }
 
   save();
-  render();
+  render(true); // entrada escalonada en la primera carga
 }
 
 function seedTristan(){
@@ -279,33 +320,35 @@ function currencyHTML(m){
   return keys.map(c=>`<span class="sub mono">${money(m[c],c)}</span>`).join("");
 }
 
-function render(){
+function render(intro){
+  introMode = !!intro;
   const sales = entries.filter(e=>e.type==="sale");
   const debts = entries.filter(e=>e.type==="debt");
 
   document.getElementById("totals").innerHTML = `
     <div class="group-lbl">Ventas</div>
     <div class="totals tri">
-      <div class="stat sold"><div class="lbl">Vendido</div><div class="val">${currencyHTML(sumSoldByCurrency(sales))}</div></div>
-      <div class="stat collected"><div class="lbl">Cobrado</div><div class="val">${currencyHTML(sumPaidByCurrency(sales))}</div></div>
-      <div class="stat pending"><div class="lbl">Me deben</div><div class="val">${currencyHTML(sumByCurrency(sales))}</div></div>
+      <div class="stat sold"${inAnim(0)}><div class="lbl">Vendido</div><div class="val">${currencyHTML(sumSoldByCurrency(sales))}</div></div>
+      <div class="stat collected"${inAnim(1)}><div class="lbl">Cobrado</div><div class="val">${currencyHTML(sumPaidByCurrency(sales))}</div></div>
+      <div class="stat pending"${inAnim(2)}><div class="lbl">Me deben</div><div class="val">${currencyHTML(sumByCurrency(sales))}</div></div>
     </div>
     <div class="group-lbl">Deudas</div>
     <div class="totals">
-      <div class="stat outflow"><div class="lbl">Debo</div><div class="val">${currencyHTML(sumByCurrency(debts))}</div></div>
-      <div class="stat returned"><div class="lbl">Devuelto</div><div class="val">${currencyHTML(sumPaidByCurrency(debts))}</div></div>
+      <div class="stat outflow"${inAnim(3)}><div class="lbl">Debo</div><div class="val">${currencyHTML(sumByCurrency(debts))}</div></div>
+      <div class="stat returned"${inAnim(4)}><div class="lbl">Devuelto</div><div class="val">${currencyHTML(sumPaidByCurrency(debts))}</div></div>
     </div>
   `;
 
   document.getElementById("app").innerHTML = `
     <div class="group-lbl">Ventas</div>
-    ${sales.length ? sales.map(card).join("") : `<div class="empty">Sin ventas todavía.</div>`}
+    ${sales.length ? sales.map((e,i)=>card(e,i+5)).join("") : `<div class="empty">Sin ventas todavía.</div>`}
     <div class="group-lbl">Deudas</div>
-    ${debts.length ? debts.map(card).join("") : `<div class="empty">Sin deudas. 🎉</div>`}
+    ${debts.length ? debts.map((e,i)=>card(e,i+5+sales.length)).join("") : `<div class="empty">Sin deudas. 🎉</div>`}
   `;
+  introMode = false; // la entrada escalonada solo se aplica una vez
 }
 
-function card(e){
+function card(e,i){
   const tot=principal(e), pd=paid(e), bal=tot-pd, cleared=bal<=0;
   const pct = tot ? Math.min(100,Math.round(pd/tot*100)) : 100;
   const cur=e.currency, flow=e.type==="sale"?"inflow":"outflow";
@@ -337,7 +380,7 @@ function card(e){
   const quick = e.id==="tristan" ? `<button class="quick" onclick="quickPay('${e.id}',100)">+ pago semanal de 100</button>` : "";
 
   return `
-  <div class="card ${flow} ${e._open?'expanded':''}">
+  <div class="card ${flow} ${e._open?'expanded':''}" data-id="${e.id}"${inAnim(i)}>
     <div class="head" onclick="toggle('${e.id}')">
       <span class="chev">▶</span>
       <div class="who"><button class="edit-btn who-edit" onclick="event.stopPropagation();renameEntry('${e.id}')" title="Renombrar">${esc(e.party)}<span class="ed">✎</span></button><span class="date">${niceDate(e.date)}</span></div>
@@ -364,14 +407,14 @@ async function addPay(id){
   const inp=document.getElementById("pin-"+id); const v=parseFloat(inp.value);
   if(!v||v<=0){ inp.focus(); return; }
   const e=entries.find(x=>x.id===id); e.payments.push({amount:v,date:today()}); e._open=true;
-  await save(); render();
+  await save(); render(); pulse(id);
 }
-async function quickPay(id,amt){ const e=entries.find(x=>x.id===id); e.payments.push({amount:amt,date:today()}); e._open=true; await save(); render(); }
+async function quickPay(id,amt){ const e=entries.find(x=>x.id===id); e.payments.push({amount:amt,date:today()}); e._open=true; await save(); render(); pulse(id); }
 async function markPaidFull(id){
   const e=entries.find(x=>x.id===id); if(!e) return;
   const bal=balance(e); if(bal<=0) return;
   e.payments.push({amount:bal,date:today()}); e._open=true;
-  await save(); render();
+  await save(); render(); pulse(id);
 }
 async function delPay(id,pi){ const e=entries.find(x=>x.id===id); e.payments.splice(pi,1); e._open=true; await save(); render(); }
 
@@ -450,8 +493,9 @@ async function saveSale(){
   const paidNow = document.getElementById("s_paid").checked;
   const total = items.reduce((a,i)=>a+(+i.price||0),0);
   const payments = (paidNow && total>0) ? [{amount:total,date:today()}] : [];
-  entries.unshift({id:"s-"+Date.now(),type:"sale",party:buyer,date:today(),currency:"AUD",items,payments,_open:true});
-  await save(); render(); dlgSale.close();
+  const id="s-"+Date.now();
+  entries.unshift({id,type:"sale",party:buyer,date:today(),currency:"AUD",items,payments,_open:true});
+  await save(); render(); dlgSale.close(); pulse(id);
 }
 async function saveDebt(){
   const who=document.getElementById("d_who").value.trim();
@@ -459,8 +503,9 @@ async function saveDebt(){
   const cur=document.getElementById("d_cur").value;
   if(!who){ document.getElementById("d_who").focus(); return; }
   if(!amt||amt<=0){ document.getElementById("d_amount").focus(); return; }
-  entries.push({id:"d-"+Date.now(),type:"debt",party:who,date:today(),currency:cur,principal:amt,payments:[],_open:true});
-  await save(); render(); dlgDebt.close();
+  const id="d-"+Date.now();
+  entries.push({id,type:"debt",party:who,date:today(),currency:cur,principal:amt,payments:[],_open:true});
+  await save(); render(); dlgDebt.close(); pulse(id);
 }
 
 /* copia */
