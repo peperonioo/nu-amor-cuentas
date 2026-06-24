@@ -90,6 +90,12 @@
   .profit-neg{color:var(--red)}
   .add-cost{font-size:12px;color:var(--dim);background:none;border:none;cursor:pointer;padding:8px 0 2px;font-weight:600}
   .add-cost:hover{color:var(--lime)}
+  /* coste por artículo (pequeño y gris, debajo del precio) */
+  .row.item{align-items:center}
+  .item-amounts{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+  .item-cost{background:none;border:none;cursor:pointer;padding:0;font-family:inherit;font-size:10.5px;letter-spacing:.02em;line-height:1.2;color:#6b6b66}
+  .item-cost:hover{color:var(--lime)}
+  .item-cost.add{color:#4f4f4c}
   .balance-line{display:flex;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);font-size:15px;font-weight:700}
   .balance-line .amt{color:var(--warn)}
   .balance-line.cleared .amt{color:var(--green)}
@@ -184,7 +190,6 @@
   <input id="s_buyer" placeholder="Comprador" autocomplete="off">
   <div id="itemRows"></div>
   <button class="quick" onclick="addItemRow()">+ añadir artículo</button>
-  <input id="s_cost" type="number" inputmode="decimal" placeholder="Pagué por todo (coste, opcional)">
   <label class="chk"><input type="checkbox" id="s_paid"> Ya cobrada (al contado)</label>
   <div class="dlg-actions">
     <button class="btn cancel" onclick="dlgSale.close()">Cancelar</button>
@@ -257,6 +262,14 @@ function normalize(data){
       e.items = Array.isArray(e.items) ? e.items : [];
       e.payments = Array.isArray(e.payments) ? e.payments : [];
       e.items.forEach(i=>{ if(i && i.name==="Coffee") i.name="Coffee machine"; });
+      // migración: coste por venta (e.cost) → coste del primer artículo con precio
+      if(e.type==="sale" && +e.cost>0 && e.items.length){
+        if(!e.items.some(i=>+i.cost>0)){
+          const target = e.items.find(i=>+i.price>0) || e.items[0];
+          target.cost = (+target.cost||0) + (+e.cost);
+        }
+      }
+      if(e.type==="sale") delete e.cost;
       return e;
     });
 }
@@ -363,26 +376,31 @@ function card(e,i){
 
   let detail;
   if(e.type==="sale"){
-    detail = e.items.map((i,idx)=>
-      `<div class="row">
+    detail = e.items.map((i,idx)=>{
+      const ic = +i.cost||0;
+      const costBtn = ic>0
+        ? `<button class="item-cost" onclick="editItemCost('${e.id}',${idx})" title="Editar coste">pagué ${money(ic,cur)}</button>`
+        : `<button class="item-cost add" onclick="editItemCost('${e.id}',${idx})" title="Añadir coste">+ coste</button>`;
+      return `<div class="row item">
         <button class="edit-btn" onclick="renameItem('${e.id}',${idx})" title="Renombrar artículo">${esc(i.name)}<span class="ed">✎</span></button>
         <span class="row-right">
-          <button class="edit-btn mono${i.price>0?'':' free'}" onclick="editItemPrice('${e.id}',${idx})" title="Editar precio">${i.price>0?money(i.price,cur):'GRATIS'}</button>
+          <span class="item-amounts">
+            <button class="edit-btn mono${i.price>0?'':' free'}" onclick="editItemPrice('${e.id}',${idx})" title="Editar precio">${i.price>0?money(i.price,cur):'GRATIS'}</button>
+            ${costBtn}
+          </span>
           <button class="pay-del" onclick="delItem('${e.id}',${idx})" title="Quitar artículo">×</button>
         </span>
-      </div>`
-    ).join("")
+      </div>`;
+    }).join("")
     + `<button class="quick" onclick="addItemTo('${e.id}')">+ añadir artículo</button>`
     + `<div class="row total"><span>Total vendido</span><span class="mono">${money(tot,cur)}</span></div>`;
-    // coste / ganancia — solo en el desglose, opcional
-    const cost = +e.cost || 0;
+    // coste (suma de los costes por artículo) y ganancia — solo en el desglose
+    const cost = e.items.reduce((a,i)=>a+(+i.cost||0),0);
     if(cost>0){
       const profit = tot - cost;
       const profitStr = (profit<0?"−":"") + money(Math.abs(profit),cur);
-      detail += `<div class="row cost"><span>Pagué (coste)</span><button class="edit-btn mono" onclick="editCost('${e.id}')" title="Editar coste">${money(cost,cur)}<span class="ed">✎</span></button></div>`
+      detail += `<div class="row cost"><span>Pagué (coste)</span><span class="mono">${money(cost,cur)}</span></div>`
         + `<div class="row profit"><span>Ganancia</span><span class="mono ${profit>=0?'profit-pos':'profit-neg'}">${profitStr}</span></div>`;
-    } else {
-      detail += `<button class="add-cost" onclick="editCost('${e.id}')">+ añadir coste / ganancia</button>`;
     }
   } else {
     detail = `<div class="row"><span>Prestado</span><button class="edit-btn mono" onclick="editPrincipal('${e.id}')" title="Editar importe">${money(tot,cur)}<span class="ed">✎</span></button></div>`;
@@ -486,12 +504,12 @@ async function editPrincipal(id){
   if(isNaN(n)||n<=0){ alert("Importe no válido."); return; }
   e.principal=n; e._open=true; await save(); render();
 }
-async function editCost(id){
-  const e=entries.find(x=>x.id===id); if(!e||e.type!=="sale") return;
-  const v=prompt("¿Cuánto pagaste por esta venta? (coste, 0 = quitar):", e.cost||"");
+async function editItemCost(id,idx){
+  const e=entries.find(x=>x.id===id); if(!e||!e.items[idx]) return;
+  const v=prompt("¿Cuánto pagaste por «"+e.items[idx].name+"»? (coste, 0 = ninguno):", e.items[idx].cost||"");
   if(v===null) return;
   const n=parseFloat(v);
-  e.cost = (isNaN(n)||n<0) ? 0 : n;
+  e.items[idx].cost = (isNaN(n)||n<0) ? 0 : n;
   e._open=true; await save(); render();
 }
 
@@ -499,7 +517,6 @@ async function editCost(id){
 function openNew(type){
   if(type==="sale"){
     document.getElementById("s_buyer").value="";
-    document.getElementById("s_cost").value="";
     document.getElementById("s_paid").checked=false;
     document.getElementById("itemRows").innerHTML="";
     addItemRow(); addItemRow();
@@ -525,9 +542,8 @@ async function saveSale(){
   const paidNow = document.getElementById("s_paid").checked;
   const total = items.reduce((a,i)=>a+(+i.price||0),0);
   const payments = (paidNow && total>0) ? [{amount:total,date:today()}] : [];
-  const cost = parseFloat(document.getElementById("s_cost").value)||0;
   const id="s-"+Date.now();
-  entries.unshift({id,type:"sale",party:buyer,date:today(),currency:"AUD",items,payments,cost,_open:true});
+  entries.unshift({id,type:"sale",party:buyer,date:today(),currency:"AUD",items,payments,_open:true});
   await save(); render(); dlgSale.close(); pulse(id);
 }
 async function saveDebt(){
