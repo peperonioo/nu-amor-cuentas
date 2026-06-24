@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Cuentas — ventas y deudas</title>
+<meta name="description" content="Registro de ventas y deudas — Nu Amor">
+<meta name="theme-color" content="#1C1C1C">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Cuentas">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<style>
+  :root{
+    --bg:#1C1C1C;--bg2:#242424;--line:#333;--lime:#CCFF00;
+    --ink:#F2F2F0;--dim:#8A8A85;--green:#7CCF6B;--warn:#E6B800;--red:#E08B7C;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:calc(20px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(60px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));max-width:640px;margin:0 auto;-webkit-font-smoothing:antialiased}
+  .mono{font-family:"SF Mono",ui-monospace,"Roboto Mono",Menlo,monospace;font-variant-numeric:tabular-nums}
+  header{margin-bottom:18px}
+  .eyebrow{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim);margin-bottom:6px}
+  h1{font-size:26px;font-weight:800;letter-spacing:-.01em}
+
+  .totals{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:18px 0 24px}
+  .stat{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:13px 13px}
+  .stat .lbl{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin-bottom:8px}
+  .stat .val{font-size:19px;font-weight:700;line-height:1.25}
+  .stat .val .sub{display:block}
+  .stat.inflow .val{color:var(--green)}
+  .stat.outflow .val{color:var(--warn)}
+
+  .group-lbl{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);margin:22px 0 10px;display:flex;align-items:center;gap:8px}
+  .group-lbl::after{content:"";flex:1;height:1px;background:var(--line)}
+
+  .card{background:var(--bg2);border:1px solid var(--line);border-radius:14px;margin-bottom:12px;overflow:hidden}
+  .head{display:flex;align-items:center;gap:12px;padding:15px 16px;cursor:pointer}
+  .head .who{font-size:17px;font-weight:700;flex:1}
+  .head .who .date{display:block;font-size:11px;font-weight:400;color:var(--dim);margin-top:2px}
+  .pill{font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;white-space:nowrap}
+  .pill.open{background:rgba(230,184,0,.14);color:var(--warn)}
+  .pill.done{background:rgba(124,207,107,.16);color:var(--green)}
+  .chev{color:var(--dim);font-size:13px;transition:transform .2s}
+  .card.expanded .chev{transform:rotate(90deg)}
+  .progress{height:4px;background:#2e2e2e}
+  .progress > div{height:100%;transition:width .35s ease}
+  .inflow .progress > div{background:var(--lime)}
+  .outflow .progress > div{background:var(--warn)}
+
+  .body{display:none;padding:4px 16px 16px}
+  .card.expanded .body{display:block}
+  .row{display:flex;justify-content:space-between;align-items:baseline;padding:7px 0;border-bottom:1px solid #2a2a2a;font-size:14px}
+  .row:last-of-type{border-bottom:none}
+  .row .free{color:var(--lime);font-size:11px;font-weight:700;letter-spacing:.08em}
+  .row.total{font-weight:800;border-top:1px solid var(--line);margin-top:4px;padding-top:10px;border-bottom:none}
+  .section-lbl{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:16px 0 8px}
+  .pay{display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:6px 0;color:var(--dim)}
+  .pay .amt{color:var(--green);font-weight:700}
+  .outflow .pay .amt{color:var(--warn)}
+  .pay-del{background:none;border:none;color:#555;font-size:16px;cursor:pointer;padding:0 4px;line-height:1}
+  .pay-del:hover{color:#c0564b}
+  .nopay{font-size:13px;color:var(--dim);font-style:italic;padding:4px 0}
+  .balance-line{display:flex;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);font-size:15px;font-weight:700}
+  .balance-line .amt{color:var(--warn)}
+  .balance-line.cleared .amt{color:var(--green)}
+  .addpay{display:flex;gap:8px;margin-top:12px}
+  .addpay input{flex:1;background:var(--bg);border:1px solid var(--line);border-radius:9px;color:var(--ink);padding:10px 12px;font-size:15px}
+  .addpay input:focus{outline:none;border-color:var(--lime)}
+  .btn{background:var(--lime);color:#111;border:none;border-radius:9px;font-weight:700;font-size:14px;padding:0 16px;cursor:pointer}
+  .btn:active{transform:translateY(1px)}
+  .quick{font-size:12px;color:var(--lime);background:none;border:none;cursor:pointer;padding:8px 0 0;font-weight:600}
+  .addbtns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+  .btn.ghost{background:none;color:var(--dim);border:1px dashed var(--line);padding:13px}
+  .btn.ghost:hover{color:var(--lime);border-color:var(--lime)}
+
+  dialog{background:var(--bg2);color:var(--ink);border:1px solid var(--line);border-radius:16px;padding:20px;max-width:420px;width:92%}
+  dialog::backdrop{background:rgba(0,0,0,.6)}
+  dialog h2{font-size:17px;margin-bottom:14px}
+  dialog input,dialog select{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:9px;color:var(--ink);padding:10px 12px;font-size:15px;margin-bottom:8px}
+  dialog input:focus,dialog select:focus{outline:none;border-color:var(--lime)}
+  .item-row{display:flex;gap:6px}
+  .item-row input.iname{flex:2}
+  .item-row input.iprice{flex:1}
+  .two{display:flex;gap:8px}
+  .two > *{flex:1}
+  .dlg-actions{display:flex;gap:8px;margin-top:6px}
+  .dlg-actions .btn{flex:1;padding:12px}
+  .dlg-actions .btn.cancel{background:none;color:var(--dim);border:1px solid var(--line)}
+  .loading{text-align:center;color:var(--dim);padding:40px;font-size:14px}
+  .empty{font-size:13px;color:var(--dim);font-style:italic;padding:2px 2px 8px}
+  .backup{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:22px}
+  .lnk{background:none;border:none;color:var(--dim);font-size:12.5px;cursor:pointer;font-family:inherit;padding:6px 4px}
+  .lnk:hover{color:var(--lime)}
+  .backup .sep{color:#3a3a3a}
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">Nu Amor · Cuentas</div>
+  <h1>Ventas y deudas</h1>
+</header>
+
+<div class="totals" id="totals"></div>
+<div id="app"><div class="loading">Cargando…</div></div>
+
+<div class="addbtns">
+  <button class="btn ghost" onclick="openNew('sale')">+ Venta</button>
+  <button class="btn ghost" onclick="openNew('debt')">+ Deuda</button>
+</div>
+
+<div class="backup">
+  <button class="lnk" onclick="exportData()">↓ Exportar copia</button>
+  <span class="sep">·</span>
+  <label class="lnk">↑ Importar copia
+    <input type="file" accept="application/json,.json" onchange="importData(this)" hidden>
+  </label>
+  <span class="sep">·</span>
+  <button class="lnk" onclick="startEmpty()">⌀ Empezar vacío</button>
+</div>
+
+<dialog id="dlgSale">
+  <h2>Nueva venta</h2>
+  <input id="s_buyer" placeholder="Comprador" autocomplete="off">
+  <div id="itemRows"></div>
+  <button class="quick" onclick="addItemRow()">+ añadir artículo</button>
+  <div class="dlg-actions">
+    <button class="btn cancel" onclick="dlgSale.close()">Cancelar</button>
+    <button class="btn" onclick="saveSale()">Guardar</button>
+  </div>
+</dialog>
+
+<dialog id="dlgDebt">
+  <h2>Nueva deuda</h2>
+  <input id="d_who" placeholder="¿A quién le debes?" autocomplete="off">
+  <div class="two">
+    <input id="d_amount" type="number" inputmode="decimal" placeholder="Importe que debes">
+    <select id="d_cur"><option value="AUD">AUD</option><option value="EUR">EUR</option><option value="USD">USD</option></select>
+  </div>
+  <div class="dlg-actions">
+    <button class="btn cancel" onclick="dlgDebt.close()">Cancelar</button>
+    <button class="btn" onclick="saveDebt()">Guardar</button>
+  </div>
+</dialog>
+
+<script>
+let entries = [];
+const dlgSale = document.getElementById("dlgSale");
+const dlgDebt = document.getElementById("dlgDebt");
+
+const fmt = n => Math.round(n).toLocaleString("en-AU");
+const today = () => new Date().toISOString().slice(0,10);
+const niceDate = iso => { const [y,m,d]=iso.split("-"); return `${d}/${m}/${y.slice(2)}`; };
+const sym = c => c==="EUR"?"€":c==="USD"?"US$":"A$";
+const money = (n,c) => sym(c)+fmt(n);
+const esc = t => (t+"").replace(/[<>&]/g,x=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[x]));
+
+// Persistencia: solo localStorage (la app corre como PWA, sin backend).
+const Store = {
+  get(k){
+    try{ return localStorage.getItem(k); }catch(e){ return null; }
+  },
+  set(k,v){
+    try{ localStorage.setItem(k,v); return true; }catch(e){ return false; }
+  }
+};
+
+const principal = e => e.type==="sale" ? e.items.reduce((a,i)=>a+(+i.price||0),0) : (+e.principal||0);
+const paid = e => e.payments.reduce((a,p)=>a+(+p.amount||0),0);
+const balance = e => principal(e) - paid(e);
+
+function save(){ Store.set("entries", JSON.stringify(entries)); }
+
+// Devuelve siempre un array de entradas saneadas (tolera datos vacíos/corruptos).
+function normalize(data){
+  if(!Array.isArray(data)) return [];
+  return data
+    .filter(e => e && typeof e === "object")
+    .map(e=>{
+      if(!e.type){ e.type = "sale"; }
+      if(e.type==="sale" && !e.party) e.party = e.buyer || "—";
+      if(!e.party) e.party = "—";
+      if(!e.currency) e.currency = "AUD";
+      if(!e.date) e.date = today();
+      e.items = Array.isArray(e.items) ? e.items : [];
+      e.payments = Array.isArray(e.payments) ? e.payments : [];
+      e.items.forEach(i=>{ if(i && i.name==="Coffee") i.name="Coffee machine"; });
+      return e;
+    });
+}
+
+function load(){
+  let data=null;
+  try{ const v=Store.get("entries"); data = v?JSON.parse(v):null; }catch(e){}
+
+  // compatibilidad con versión anterior (solo ventas, clave "sales")
+  if(!Array.isArray(data)){
+    try{ const old=Store.get("sales"); if(old){ data=JSON.parse(old); } }catch(e){}
+  }
+
+  // si no hay datos válidos, sembrar la venta inicial
+  if(!Array.isArray(data) || !data.length){ data = [seedTristan()]; }
+
+  entries = normalize(data);
+
+  // sembrar deudas una sola vez
+  const seeded = Store.get("seed_debts");
+  if(!seeded){
+    seedDebts().forEach(d=>{ if(!entries.some(x=>x.id===d.id)) entries.push(d); });
+    Store.set("seed_debts","1");
+  }
+
+  save();
+  render();
+}
+
+function seedTristan(){
+  return { id:"tristan", type:"sale", party:"Tristan", date:today(), currency:"AUD",
+    items:[
+      {name:"Guitar (+ strings)",price:200},{name:"Bass",price:90},
+      {name:"Akai",price:100},{name:"Nutribullet",price:60},
+      {name:"2x Piano stand",price:70},{name:"Coffee machine",price:0}
+    ], payments:[{amount:100,date:today()}] };
+}
+function seedDebts(){
+  return [
+    { id:"debt-enrique", type:"debt", party:"Enrique", date:today(), currency:"EUR",
+      principal:430, payments:[{amount:300,date:today()}] },
+    { id:"debt-dario", type:"debt", party:"Darío", date:today(), currency:"AUD",
+      principal:500, payments:[] },
+    { id:"debt-dani", type:"debt", party:"Dani Alonso", date:today(), currency:"AUD",
+      principal:8000, payments:[] }
+  ];
+}
+
+function sumByCurrency(list){
+  const m={};
+  list.forEach(e=>{ const b=balance(e); if(b>0){ m[e.currency]=(m[e.currency]||0)+b; } });
+  return m;
+}
+function currencyHTML(m){
+  const keys=Object.keys(m);
+  if(!keys.length) return `<span class="sub">—</span>`;
+  return keys.map(c=>`<span class="sub mono">${money(m[c],c)}</span>`).join("");
+}
+
+function render(){
+  const sales = entries.filter(e=>e.type==="sale");
+  const debts = entries.filter(e=>e.type==="debt");
+
+  document.getElementById("totals").innerHTML = `
+    <div class="stat inflow"><div class="lbl">Me deben</div><div class="val">${currencyHTML(sumByCurrency(sales))}</div></div>
+    <div class="stat outflow"><div class="lbl">Debo</div><div class="val">${currencyHTML(sumByCurrency(debts))}</div></div>
+  `;
+
+  document.getElementById("app").innerHTML = `
+    <div class="group-lbl">Me deben</div>
+    ${sales.length ? sales.map(card).join("") : `<div class="empty">Sin ventas pendientes.</div>`}
+    <div class="group-lbl">Debo</div>
+    ${debts.length ? debts.map(card).join("") : `<div class="empty">Sin deudas. 🎉</div>`}
+  `;
+}
+
+function card(e){
+  const tot=principal(e), pd=paid(e), bal=tot-pd, cleared=bal<=0;
+  const pct = tot ? Math.min(100,Math.round(pd/tot*100)) : 100;
+  const cur=e.currency, flow=e.type==="sale"?"inflow":"outflow";
+
+  let detail;
+  if(e.type==="sale"){
+    detail = e.items.map(i=>
+      `<div class="row"><span>${esc(i.name)}</span>${i.price>0?`<span class="mono">${money(i.price,cur)}</span>`:`<span class="free">GRATIS</span>`}</div>`
+    ).join("") + `<div class="row total"><span>Total</span><span class="mono">${money(tot,cur)}</span></div>`;
+  } else {
+    detail = `<div class="row"><span>Prestado</span><span class="mono">${money(tot,cur)}</span></div>`;
+  }
+
+  const pays = e.payments.length
+    ? e.payments.map((p,pi)=>`<div class="pay"><span>${niceDate(p.date)}</span><span><span class="amt mono">+${money(p.amount,cur)}</span> <button class="pay-del" onclick="delPay('${e.id}',${pi})">×</button></span></div>`).join("")
+    : `<div class="nopay">${e.type==="sale"?"Aún sin pagos.":"Aún no has devuelto nada."}</div>`;
+
+  const balLabel = e.type==="sale" ? (cleared?"Cobrado":"Te debe") : (cleared?"Saldado":"Debes");
+  const pillTxt = cleared ? (e.type==="sale"?"COBRADO":"SALDADO") : money(bal,cur);
+  const payLabel = e.type==="sale" ? "Cobrar" : "Pagar";
+  const quick = e.id==="tristan" ? `<button class="quick" onclick="quickPay('${e.id}',100)">+ pago semanal de 100</button>` : "";
+
+  return `
+  <div class="card ${flow} ${e._open?'expanded':''}">
+    <div class="head" onclick="toggle('${e.id}')">
+      <span class="chev">▶</span>
+      <div class="who">${esc(e.party)}<span class="date">${niceDate(e.date)}</span></div>
+      <span class="pill ${cleared?'done':'open'}">${pillTxt}</span>
+    </div>
+    <div class="progress"><div style="width:${pct}%"></div></div>
+    <div class="body">
+      ${detail}
+      <div class="section-lbl">${e.type==="sale"?"Pagos recibidos":"Devoluciones"}</div>
+      ${pays}
+      <div class="balance-line ${cleared?'cleared':''}"><span>${balLabel}</span><span class="amt mono">${money(Math.max(0,bal),cur)}</span></div>
+      ${cleared?"":`
+      <div class="addpay">
+        <input id="pin-${e.id}" type="number" inputmode="decimal" placeholder="Importe (${cur})">
+        <button class="btn" onclick="addPay('${e.id}')">${payLabel}</button>
+      </div>${quick}`}
+    </div>
+  </div>`;
+}
+
+function toggle(id){ const e=entries.find(x=>x.id===id); e._open=!e._open; render(); }
+async function addPay(id){
+  const inp=document.getElementById("pin-"+id); const v=parseFloat(inp.value);
+  if(!v||v<=0){ inp.focus(); return; }
+  const e=entries.find(x=>x.id===id); e.payments.push({amount:v,date:today()}); e._open=true;
+  await save(); render();
+}
+async function quickPay(id,amt){ const e=entries.find(x=>x.id===id); e.payments.push({amount:amt,date:today()}); e._open=true; await save(); render(); }
+async function delPay(id,pi){ const e=entries.find(x=>x.id===id); e.payments.splice(pi,1); e._open=true; await save(); render(); }
+
+/* nueva venta */
+function openNew(type){
+  if(type==="sale"){
+    document.getElementById("s_buyer").value="";
+    document.getElementById("itemRows").innerHTML="";
+    addItemRow(); addItemRow();
+    dlgSale.showModal();
+  } else {
+    document.getElementById("d_who").value="";
+    document.getElementById("d_amount").value="";
+    document.getElementById("d_cur").value="AUD";
+    dlgDebt.showModal();
+  }
+}
+function addItemRow(){
+  const div=document.createElement("div"); div.className="item-row";
+  div.innerHTML=`<input class="iname" placeholder="Artículo"><input class="iprice" type="number" inputmode="decimal" placeholder="$">`;
+  document.getElementById("itemRows").appendChild(div);
+}
+async function saveSale(){
+  const buyer=document.getElementById("s_buyer").value.trim();
+  if(!buyer){ document.getElementById("s_buyer").focus(); return; }
+  const items=[...document.querySelectorAll("#itemRows .item-row")].map(r=>({name:r.querySelector(".iname").value.trim(),price:parseFloat(r.querySelector(".iprice").value)||0})).filter(i=>i.name);
+  if(!items.length) return;
+  entries.unshift({id:"s-"+Date.now(),type:"sale",party:buyer,date:today(),currency:"AUD",items,payments:[],_open:true});
+  await save(); render(); dlgSale.close();
+}
+async function saveDebt(){
+  const who=document.getElementById("d_who").value.trim();
+  const amt=parseFloat(document.getElementById("d_amount").value);
+  const cur=document.getElementById("d_cur").value;
+  if(!who){ document.getElementById("d_who").focus(); return; }
+  if(!amt||amt<=0){ document.getElementById("d_amount").focus(); return; }
+  entries.push({id:"d-"+Date.now(),type:"debt",party:who,date:today(),currency:cur,principal:amt,payments:[],_open:true});
+  await save(); render(); dlgDebt.close();
+}
+
+/* copia */
+function exportData(){
+  // No exportamos el estado transitorio de UI (_open).
+  const clean = entries.map(({_open, ...e}) => e);
+  const blob=new Blob([JSON.stringify(clean,null,2)],{type:"application/json"});
+  const url=URL.createObjectURL(blob); const a=document.createElement("a");
+  a.href=url; a.download="cuentas-"+today()+".json"; a.click(); URL.revokeObjectURL(url);
+}
+function importData(input){
+  const file=input.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=()=>{
+    try{
+      const d=JSON.parse(reader.result);
+      if(!Array.isArray(d)) throw 0;
+      entries=normalize(d);
+      save(); render();
+    }catch(e){ alert("No se pudo leer el archivo. ¿Es una copia válida?"); }
+    input.value="";
+  };
+  reader.readAsText(file);
+}
+
+/* empezar de cero */
+function startEmpty(){
+  if(!confirm("¿Borrar todas las entradas y empezar vacío? Esto no se puede deshacer (exporta una copia antes si quieres).")) return;
+  entries=[];
+  Store.set("seed_debts","1"); // evita que se vuelvan a sembrar las deudas
+  save(); render();
+}
+
+load();
+
+if("serviceWorker" in navigator){
+  // Recarga controlada: cuando un SW nuevo toma el control (tras un deploy con
+  // CACHE_VERSION distinto), recargamos una sola vez para mostrar la versión nueva.
+  // hadController evita recargar en la primera instalación (cuando no había SW previo).
+  const hadController = !!navigator.serviceWorker.controller;
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener("controllerchange",()=>{
+    if(refreshing || !hadController) return;
+    refreshing = true;
+    window.location.reload();
+  });
+  window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+}
+</script>
+</body>
+</html>

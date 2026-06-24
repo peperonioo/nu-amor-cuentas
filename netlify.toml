@@ -1,0 +1,27 @@
+# Sitio estático sin build. Netlify sirve la raíz directamente.
+[build]
+  publish = "."
+  command = ""
+
+# Cabeceras: el service worker no debe cachearse de forma agresiva.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/manifest.webmanifest"
+  [headers.values]
+    Content-Type = "application/manifest+json"
+
+# El HTML tampoco debe cachearse de forma agresiva: así el SW (network-first)
+# recibe siempre el index.html más reciente tras un deploy.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "no-cache"
