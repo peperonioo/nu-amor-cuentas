@@ -1,4 +1,4 @@
-# Cuentas — Nu Amor
+# Tool (nombre temporal)
 
 PWA instalable para llevar el registro de **ventas** (lo que me deben) y **deudas** (lo que debo), con desglose por artículo, pagos parciales y saldos por moneda (AUD / EUR / USD).
 
