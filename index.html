@@ -210,11 +210,69 @@
   </div>
 </dialog>
 
+<!-- diálogo genérico de edición/confirmación (sustituye a prompt/confirm,
+     poco fiables dentro de una PWA instalada en iOS) -->
+<dialog id="dlgEdit">
+  <h2 id="ed_title"></h2>
+  <input id="ed_input" autocomplete="off">
+  <div class="dlg-actions">
+    <button class="btn cancel" id="ed_cancel">Cancelar</button>
+    <button class="btn" id="ed_ok">Guardar</button>
+  </div>
+</dialog>
+
 <script>
 let entries = [];
 let introMode = false; // entrada escalonada solo en la primera carga
 const dlgSale = document.getElementById("dlgSale");
 const dlgDebt = document.getElementById("dlgDebt");
+const dlgEdit = document.getElementById("dlgEdit");
+
+/* Diálogo propio (reemplaza prompt/confirm/alert, poco fiables en PWA iOS).
+   askEdit → texto/número | askConfirm → sí/no | notify → solo aviso. */
+let edResolve = null;
+function edClose(val){ const r=edResolve; edResolve=null; dlgEdit.close(); if(r) r(val); }
+function askEdit(title, value="", opts={}){
+  return new Promise(resolve=>{
+    edResolve = resolve;
+    document.getElementById("ed_title").textContent = title;
+    const inp = document.getElementById("ed_input");
+    inp.style.display = "";
+    inp.type = opts.number ? "number" : "text";
+    if(opts.number) inp.setAttribute("inputmode","decimal"); else inp.removeAttribute("inputmode");
+    inp.value = (value==null ? "" : value);
+    document.getElementById("ed_ok").textContent = opts.ok || "Guardar";
+    document.getElementById("ed_cancel").style.display = "";
+    dlgEdit.showModal();
+    setTimeout(()=>{ try{ inp.focus(); inp.select(); }catch(e){} }, 40);
+  });
+}
+function askConfirm(title, ok="Sí"){
+  return new Promise(resolve=>{
+    edResolve = resolve;
+    document.getElementById("ed_title").textContent = title;
+    document.getElementById("ed_input").style.display = "none";
+    document.getElementById("ed_ok").textContent = ok;
+    document.getElementById("ed_cancel").style.display = "";
+    dlgEdit.showModal();
+  });
+}
+function notify(title){
+  return new Promise(resolve=>{
+    edResolve = resolve;
+    document.getElementById("ed_title").textContent = title;
+    document.getElementById("ed_input").style.display = "none";
+    document.getElementById("ed_ok").textContent = "OK";
+    document.getElementById("ed_cancel").style.display = "none";
+    dlgEdit.showModal();
+  });
+}
+document.getElementById("ed_ok").onclick = () => {
+  const inp = document.getElementById("ed_input");
+  edClose(inp.style.display==="none" ? true : inp.value);
+};
+document.getElementById("ed_cancel").onclick = () => edClose(null);
+dlgEdit.addEventListener("cancel", (ev)=>{ ev.preventDefault(); edClose(null); }); // ESC / gesto atrás
 
 // estilo inline para la animación de entrada (escalonada) — vacío fuera del intro
 const inAnim = i => introMode ? ` style="animation:cardIn .38s cubic-bezier(.2,.7,.3,1) both;animation-delay:${Math.min(i,9)*45}ms"` : "";
@@ -459,24 +517,24 @@ async function markPaidFull(id){
 }
 async function delPay(id,pi){ const e=entries.find(x=>x.id===id); e.payments.splice(pi,1); e._open=true; await save(); render(); }
 
-/* edición de nombres / importes */
+/* edición de nombres / importes — vía diálogo propio (funciona en PWA) */
 async function renameEntry(id){
   const e=entries.find(x=>x.id===id); if(!e) return;
-  const v=prompt(e.type==="sale"?"Nombre del comprador:":"¿A quién le debes?:", e.party);
+  const v=await askEdit(e.type==="sale"?"Nombre del comprador":"¿A quién le debes?", e.party);
   if(v===null) return;
   const t=v.trim(); if(!t) return;
   e.party=t; e._open=true; await save(); render();
 }
 async function renameItem(id,idx){
   const e=entries.find(x=>x.id===id); if(!e||!e.items[idx]) return;
-  const v=prompt("Nombre del artículo:", e.items[idx].name);
+  const v=await askEdit("Nombre del artículo", e.items[idx].name);
   if(v===null) return;
   const t=v.trim(); if(!t) return;
   e.items[idx].name=t; e._open=true; await save(); render();
 }
 async function editItemPrice(id,idx){
   const e=entries.find(x=>x.id===id); if(!e||!e.items[idx]) return;
-  const v=prompt("Precio (0 = gratis):", e.items[idx].price);
+  const v=await askEdit("Precio de «"+e.items[idx].name+"» (0 = gratis)", e.items[idx].price, {number:true});
   if(v===null) return;
   const n=parseFloat(v);
   e.items[idx].price = (isNaN(n)||n<0) ? 0 : n;
@@ -484,29 +542,30 @@ async function editItemPrice(id,idx){
 }
 async function addItemTo(id){
   const e=entries.find(x=>x.id===id); if(!e) return;
-  const name=prompt("Nombre del artículo:"); if(name===null) return;
+  const name=await askEdit("Nombre del artículo nuevo"); if(name===null) return;
   const t=name.trim(); if(!t) return;
-  const pv=prompt("Precio (0 = gratis):","0"); if(pv===null) return;
+  const pv=await askEdit("Precio de «"+t+"» (0 = gratis)","0",{number:true}); if(pv===null) return;
   const n=parseFloat(pv);
   e.items.push({name:t, price:(isNaN(n)||n<0)?0:n});
   e._open=true; await save(); render();
 }
 async function delItem(id,idx){
-  const e=entries.find(x=>x.id===id); if(!e) return;
-  if(e.items.length<=1){ alert("Una venta necesita al menos un artículo. Edítalo en vez de borrarlo."); return; }
+  const e=entries.find(x=>x.id===id); if(!e||!e.items[idx]) return;
+  if(e.items.length<=1){ await notify("Una venta necesita al menos un artículo. Renómbralo en vez de borrarlo."); return; }
+  if(!await askConfirm("¿Quitar «"+e.items[idx].name+"» de esta venta?","Quitar")) return;
   e.items.splice(idx,1); e._open=true; await save(); render();
 }
 async function editPrincipal(id){
   const e=entries.find(x=>x.id===id); if(!e) return;
-  const v=prompt("Importe prestado:", e.principal);
+  const v=await askEdit("Importe prestado", e.principal, {number:true});
   if(v===null) return;
   const n=parseFloat(v);
-  if(isNaN(n)||n<=0){ alert("Importe no válido."); return; }
+  if(isNaN(n)||n<=0){ await notify("Importe no válido."); return; }
   e.principal=n; e._open=true; await save(); render();
 }
 async function editItemCost(id,idx){
   const e=entries.find(x=>x.id===id); if(!e||!e.items[idx]) return;
-  const v=prompt("¿Cuánto pagaste por «"+e.items[idx].name+"»? (coste, 0 = ninguno):", e.items[idx].cost||"");
+  const v=await askEdit("¿Cuánto pagaste por «"+e.items[idx].name+"»? (coste, 0 = ninguno)", e.items[idx].cost||"", {number:true});
   if(v===null) return;
   const n=parseFloat(v);
   e.items[idx].cost = (isNaN(n)||n<0) ? 0 : n;
@@ -574,15 +633,15 @@ function importData(input){
       if(!Array.isArray(d)) throw 0;
       entries=normalize(d);
       save(); render();
-    }catch(e){ alert("No se pudo leer el archivo. ¿Es una copia válida?"); }
+    }catch(e){ notify("No se pudo leer el archivo. ¿Es una copia válida?"); }
     input.value="";
   };
   reader.readAsText(file);
 }
 
 /* empezar de cero */
-function startEmpty(){
-  if(!confirm("¿Borrar todas las entradas y empezar vacío? Esto no se puede deshacer (exporta una copia antes si quieres).")) return;
+async function startEmpty(){
+  if(!await askConfirm("¿Borrar todas las entradas y empezar vacío? No se puede deshacer (exporta una copia antes si quieres).","Borrar todo")) return;
   entries=[];
   Store.set("seed_debts","1"); // evita que se vuelvan a sembrar las deudas
   save(); render();
