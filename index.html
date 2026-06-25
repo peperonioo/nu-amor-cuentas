@@ -200,6 +200,7 @@
 <dialog id="dlgDebt">
   <h2>Nueva deuda</h2>
   <input id="d_who" placeholder="¿A quién le debes?" autocomplete="off">
+  <input id="d_concept" placeholder="¿Qué es? (opcional: préstamo, alquiler…)" autocomplete="off">
   <div class="two">
     <input id="d_amount" type="number" inputmode="decimal" placeholder="Importe que debes">
     <select id="d_cur"><option value="AUD">AUD</option><option value="EUR">EUR</option><option value="USD">USD</option></select>
@@ -461,7 +462,8 @@ function card(e,i){
         + `<div class="row profit"><span>Ganancia</span><span class="mono ${profit>=0?'profit-pos':'profit-neg'}">${profitStr}</span></div>`;
     }
   } else {
-    detail = `<div class="row"><span>Prestado</span><button class="edit-btn mono" onclick="editPrincipal('${e.id}')" title="Editar importe">${money(tot,cur)}<span class="ed">✎</span></button></div>`;
+    const concept = e.concept || "Prestado";
+    detail = `<div class="row"><button class="edit-btn" onclick="editConcept('${e.id}')" title="Editar concepto">${esc(concept)}<span class="ed">✎</span></button><button class="edit-btn mono" onclick="editPrincipal('${e.id}')" title="Editar importe">${money(tot,cur)}<span class="ed">✎</span></button></div>`;
   }
 
   const pays = e.payments.length
@@ -474,7 +476,7 @@ function card(e,i){
   // bajo el nombre: primer artículo (+ cuántos más) en las ventas
   const itemHint = (e.type==="sale" && e.items.length)
     ? esc(e.items[0].name) + (e.items.length>1 ? ` +${e.items.length-1}` : "") + " · "
-    : "";
+    : (e.type==="debt" && e.concept ? esc(e.concept) + " · " : "");
   const payLabel = e.type==="sale" ? "Cobrar" : "Pagar";
   const quick = e.id==="tristan" ? `<button class="quick" onclick="quickPay('${e.id}',100)">+ pago semanal de 100</button>` : "";
 
@@ -557,11 +559,18 @@ async function delItem(id,idx){
 }
 async function editPrincipal(id){
   const e=entries.find(x=>x.id===id); if(!e) return;
-  const v=await askEdit("Importe prestado", e.principal, {number:true});
+  const v=await askEdit("Importe", e.principal, {number:true});
   if(v===null) return;
   const n=parseFloat(v);
   if(isNaN(n)||n<=0){ await notify("Importe no válido."); return; }
   e.principal=n; e._open=true; await save(); render();
+}
+async function editConcept(id){
+  const e=entries.find(x=>x.id===id); if(!e) return;
+  const v=await askEdit("¿Qué es esta deuda? (vacío = «Prestado»)", e.concept||"");
+  if(v===null) return;
+  e.concept = v.trim(); // vacío → vuelve a «Prestado» por defecto
+  e._open=true; await save(); render();
 }
 async function editItemCost(id,idx){
   const e=entries.find(x=>x.id===id); if(!e||!e.items[idx]) return;
@@ -582,6 +591,7 @@ function openNew(type){
     dlgSale.showModal();
   } else {
     document.getElementById("d_who").value="";
+    document.getElementById("d_concept").value="";
     document.getElementById("d_amount").value="";
     document.getElementById("d_cur").value="AUD";
     dlgDebt.showModal();
@@ -611,8 +621,9 @@ async function saveDebt(){
   const cur=document.getElementById("d_cur").value;
   if(!who){ document.getElementById("d_who").focus(); return; }
   if(!amt||amt<=0){ document.getElementById("d_amount").focus(); return; }
+  const concept=document.getElementById("d_concept").value.trim();
   const id="d-"+Date.now();
-  entries.push({id,type:"debt",party:who,date:today(),currency:cur,principal:amt,payments:[],_open:true});
+  entries.push({id,type:"debt",party:who,date:today(),currency:cur,principal:amt,concept,payments:[],_open:true});
   await save(); render(); dlgDebt.close(); pulse(id);
 }
 
