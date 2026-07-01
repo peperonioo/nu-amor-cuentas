@@ -65,6 +65,16 @@
   .confetti i{position:absolute;top:28%;width:8px;height:12px;border-radius:2px;opacity:0;animation:conf var(--d) cubic-bezier(.2,.6,.4,1) forwards}
   @keyframes conf{0%{opacity:1;transform:translate(0,0) rotate(0)}100%{opacity:0;transform:translate(calc(var(--x)*160px),62vh) rotate(var(--r))}}
 
+  .toolbar{display:flex;gap:8px;margin:18px 0 4px}
+  .search{flex:1;background:var(--bg2);border:1px solid var(--line);border-radius:10px;color:var(--ink);padding:10px 12px;font-size:14px;font-family:inherit}
+  .search:focus{outline:none;border-color:var(--lime)}
+  .sort-select{background:var(--bg2);border:1px solid var(--line);border-radius:10px;color:var(--ink);padding:0 10px;font-size:13px;font-family:inherit}
+  .sort-select:focus{outline:none;border-color:var(--lime)}
+  .onboard{text-align:center;padding:48px 20px 40px}
+  .onboard-emoji{font-size:44px;margin-bottom:10px}
+  .onboard-title{font-size:19px;font-weight:800;margin-bottom:8px}
+  .onboard-sub{font-size:14px;color:var(--dim);line-height:1.5;max-width:320px;margin:0 auto 20px}
+  .onboard-btn{padding:13px 22px;font-size:15px}
   .group-lbl{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);margin:22px 0 10px;display:flex;align-items:center;gap:8px}
   .group-lbl::after{content:"";flex:1;height:1px;background:var(--line)}
 
@@ -197,6 +207,14 @@
 </header>
 
 <div id="totals"></div>
+<div id="toolbar" class="toolbar" style="display:none">
+  <input id="q" class="search" placeholder="Buscar por nombre o artículo…" autocomplete="off" oninput="onSearch(this.value)">
+  <select id="sortSel" class="sort-select" onchange="onSort(this.value)">
+    <option value="recent">Recientes</option>
+    <option value="amount">Mayor importe</option>
+    <option value="pending">Pendientes 1º</option>
+  </select>
+</div>
 <div id="app"><div class="loading">Cargando…</div></div>
 
 <div class="addbtns">
@@ -451,14 +469,16 @@ function load(){
     try{ const old=Store.get("sales"); if(old){ data=JSON.parse(old); } }catch(e){}
   }
 
-  // si no hay datos válidos, sembrar la venta inicial
-  if(!Array.isArray(data) || !data.length){ data = [seedTristan()]; }
+  if(!Array.isArray(data)) data = [];
+
+  // sembrar los datos de ejemplo SOLO en la primera vez (no si el usuario ya
+  // usó la app y la vació con "Empezar vacío").
+  const firstRun = !Store.get("seed_debts");
+  if(firstRun && !data.length){ data = [seedTristan()]; }
 
   entries = normalize(data);
 
-  // sembrar deudas una sola vez
-  const seeded = Store.get("seed_debts");
-  if(!seeded){
+  if(firstRun){
     seedDebts().forEach(d=>{ if(!entries.some(x=>x.id===d.id)) entries.push(d); });
     Store.set("seed_debts","1");
   }
@@ -555,8 +575,54 @@ function chartSVG(series){
     }).join("")+`</svg>`;
 }
 
+let searchQuery = "", sortMode = "recent";
+function onboardingHTML(){
+  return `<div class="onboard">
+    <div class="onboard-emoji">💸</div>
+    <div class="onboard-title">Empieza a registrar</div>
+    <div class="onboard-sub">Añade tu primera venta o deuda — o crea varias de golpe con “✨ Importar” (texto o foto).</div>
+    <button class="btn onboard-btn" onclick="openNew('sale')">+ Añadir venta</button>
+  </div>`;
+}
+function sortEntries(list){
+  const arr=[...list];
+  if(sortMode==="amount") arr.sort((a,b)=>balance(b)-balance(a));
+  else if(sortMode==="pending") arr.sort((a,b)=> ((balance(b)>0)-(balance(a)>0)) || (balance(b)-balance(a)));
+  else arr.sort((a,b)=> (b.date||"").localeCompare(a.date||"") || (b.id>a.id?1:-1));
+  return arr;
+}
+function renderList(){
+  let sales = entries.filter(e=>e.type==="sale");
+  let debts = entries.filter(e=>e.type==="debt");
+  const q=(searchQuery||"").trim().toLowerCase();
+  if(q){
+    const match=e=> (e.party||"").toLowerCase().includes(q)
+      || (e.concept||"").toLowerCase().includes(q)
+      || (e.items||[]).some(i=>(i.name||"").toLowerCase().includes(q));
+    sales=sales.filter(match); debts=debts.filter(match);
+  }
+  sales=sortEntries(sales); debts=sortEntries(debts);
+  document.getElementById("app").innerHTML = `
+    <div class="group-lbl">Ventas</div>
+    ${sales.length ? sales.map((e,i)=>card(e,i+5)).join("") : `<div class="empty">${q?'Sin resultados en ventas.':'Sin ventas todavía.'}</div>`}
+    <div class="group-lbl">Deudas</div>
+    ${debts.length ? debts.map((e,i)=>card(e,i+5+sales.length)).join("") : `<div class="empty">${q?'Sin resultados en deudas.':'Sin deudas. 🎉'}</div>`}
+  `;
+}
+function onSearch(v){ searchQuery=v; renderList(); }
+function onSort(v){ sortMode=v; renderList(); }
+
 function render(intro){
   introMode = !!intro;
+  const totalsEl = document.getElementById("totals");
+  const toolbar = document.getElementById("toolbar");
+  // estado vacío / onboarding
+  if(!entries.length){
+    totalsEl.innerHTML = "";
+    if(toolbar) toolbar.style.display = "none";
+    document.getElementById("app").innerHTML = onboardingHTML();
+    introMode = false; updateBackupHint(); return;
+  }
   const sales = entries.filter(e=>e.type==="sale");
   const debts = entries.filter(e=>e.type==="debt");
 
@@ -564,7 +630,7 @@ function render(intro){
   const domCur = dominantCurrency();
   const series = monthlySeries(domCur);
   const hasChart = series.some(s=>s.value>0);
-  document.getElementById("totals").innerHTML = `
+  totalsEl.innerHTML = `
     <div class="group-lbl">Resumen</div>
     <div class="hero"${inAnim(0)}>
       <div class="hero-lbl">Neto · me deben − debo</div>
@@ -584,12 +650,8 @@ function render(intro){
     </div>
   `;
 
-  document.getElementById("app").innerHTML = `
-    <div class="group-lbl">Ventas</div>
-    ${sales.length ? sales.map((e,i)=>card(e,i+5)).join("") : `<div class="empty">Sin ventas todavía.</div>`}
-    <div class="group-lbl">Deudas</div>
-    ${debts.length ? debts.map((e,i)=>card(e,i+5+sales.length)).join("") : `<div class="empty">Sin deudas. 🎉</div>`}
-  `;
+  if(toolbar) toolbar.style.display = entries.length>=3 ? "" : "none";
+  renderList();
   introMode = false; // la entrada escalonada solo se aplica una vez
   updateBackupHint();
   animateCounts(intro);
