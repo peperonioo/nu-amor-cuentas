@@ -39,6 +39,14 @@
   .chart{width:100%;height:92px;display:block}
   .chart rect{fill:var(--lime)}
   .chart text{fill:var(--dim);font-size:9px;font-family:inherit}
+  .chart .hit{fill:transparent;cursor:pointer}
+  .chart-tip{text-align:center;font-size:11.5px;color:var(--lime);margin-top:8px;min-height:16px;opacity:0;transition:opacity .15s}
+  .chart-tip.show{opacity:1}
+  /* entradas saldadas: atenuadas y con el importe tachado (no se borran) */
+  .card.done{opacity:.62}
+  .card.done .who,.card.done .date{color:var(--dim)}
+  .card.done .pill s{opacity:.85}
+  @media (hover:hover){ .card.done:hover{opacity:1} }
   .stat.sold .val{color:var(--lime)}
   .stat.collected .val{color:var(--green)}
   .stat.pending .val{color:var(--warn)}
@@ -557,7 +565,7 @@ function monthlySeries(cur){
   const now=new Date(), buckets=[];
   for(let k=5;k>=0;k--){
     const d=new Date(now.getFullYear(), now.getMonth()-k, 1);
-    buckets.push({ ym:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`, label:MONTHS[d.getMonth()], value:0 });
+    buckets.push({ ym:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`, label:MONTHS[d.getMonth()], labelFull:`${MONTHS[d.getMonth()]} '${String(d.getFullYear()).slice(2)}`, value:0 });
   }
   entries.filter(e=>e.type==="sale" && e.currency===cur).forEach(e=>{
     e.payments.forEach(p=>{ const b=buckets.find(x=>x.ym===(p.date||"").slice(0,7)); if(b) b.value+=(+p.amount||0); });
@@ -571,8 +579,17 @@ function chartSVG(series){
     series.map((s,i)=>{
       const h=Math.round((s.value/max)*(H-24)), x=i*(bw+gap);
       return `<rect x="${x}" y="${H-20-h}" width="${bw}" height="${Math.max(h,2)}" rx="3" opacity="${s.value?0.92:0.16}"></rect>`+
-             `<text x="${x+bw/2}" y="${H-5}" text-anchor="middle">${s.label}</text>`;
+             `<text x="${x+bw/2}" y="${H-5}" text-anchor="middle">${s.label}</text>`+
+             `<rect class="hit" x="${x-gap/2}" y="0" width="${bw+gap}" height="${H}" onclick="chartTap(${i})"></rect>`;
     }).join("")+`</svg>`;
+}
+let lastSeries=[], lastChartCur="AUD", chartTipT=null;
+function chartTap(i){
+  const s=lastSeries[i], el=document.getElementById("chartTip");
+  if(!s||!el) return;
+  el.textContent = `${s.labelFull}: ${s.value ? money(s.value,lastChartCur) : "sin cobros"}`;
+  el.classList.add("show");
+  clearTimeout(chartTipT); chartTipT=setTimeout(()=>el.classList.remove("show"), 2600);
 }
 
 let searchQuery = "", sortMode = "recent";
@@ -586,9 +603,14 @@ function onboardingHTML(){
 }
 function sortEntries(list){
   const arr=[...list];
-  if(sortMode==="amount") arr.sort((a,b)=>balance(b)-balance(a));
-  else if(sortMode==="pending") arr.sort((a,b)=> ((balance(b)>0)-(balance(a)>0)) || (balance(b)-balance(a)));
-  else arr.sort((a,b)=> (b.date||"").localeCompare(a.date||"") || (b.id>a.id?1:-1));
+  const cmp = sortMode==="amount" ? (a,b)=>balance(b)-balance(a)
+    : sortMode==="pending" ? (a,b)=>balance(b)-balance(a)
+    : (a,b)=> (b.date||"").localeCompare(a.date||"") || (b.id>a.id?1:-1);
+  arr.sort((a,b)=>{
+    const ca=balance(a)<=0, cb=balance(b)<=0;
+    if(ca!==cb) return ca?1:-1;   // las saldadas siempre al fondo del grupo
+    return cmp(a,b);
+  });
   return arr;
 }
 function renderList(){
@@ -630,12 +652,13 @@ function render(intro){
   const domCur = dominantCurrency();
   const series = monthlySeries(domCur);
   const hasChart = series.some(s=>s.value>0);
+  lastSeries = series; lastChartCur = domCur;
   totalsEl.innerHTML = `
     <div class="group-lbl">Resumen</div>
     <div class="hero"${inAnim(0)}>
       <div class="hero-lbl">Neto · me deben − debo</div>
       <div class="hero-val">${netHTML(net)}</div>
-      ${hasChart ? `<div class="chart-lbl">Cobrado · últimos 6 meses (${domCur})</div>${chartSVG(series)}` : ``}
+      ${hasChart ? `<div class="chart-lbl">Cobrado · últimos 6 meses (${domCur}) · toca una barra</div>${chartSVG(series)}<div id="chartTip" class="chart-tip"></div>` : ``}
     </div>
     <div class="group-lbl">Ventas</div>
     <div class="totals tri">
@@ -701,7 +724,7 @@ function card(e,i){
 
   const balLabel = e.type==="sale" ? (cleared?"Cobrado":"Te debe") : (cleared?"Saldado":"Debes");
   // aunque esté cobrado/saldado, mostramos el importe (cuánto recibiste/devolviste)
-  const pillTxt = cleared ? ("✓ "+money(tot,cur)) : money(bal,cur);
+  const pillTxt = cleared ? ("✓ <s>"+money(tot,cur)+"</s>") : money(bal,cur);
   // bajo el nombre: primer artículo (+ cuántos más) en las ventas
   const itemHint = (e.type==="sale" && e.items.length)
     ? esc(e.items[0].name) + (e.items.length>1 ? ` +${e.items.length-1}` : "") + " · "
@@ -710,7 +733,7 @@ function card(e,i){
   const quick = e.id==="tristan" ? `<button class="quick" onclick="quickPay('${e.id}',100)">+ pago semanal de 100</button>` : "";
 
   return `
-  <div class="card ${flow} ${e._open?'expanded':''}" data-id="${e.id}"${inAnim(i)}>
+  <div class="card ${flow} ${e._open?'expanded':''} ${cleared?'done':''}" data-id="${e.id}"${inAnim(i)}>
     <div class="head" onclick="toggle('${e.id}')">
       <span class="chev">▶</span>
       <div class="who"><button class="edit-btn who-edit" onclick="event.stopPropagation();renameEntry('${e.id}')" title="Renombrar">${esc(e.party)}<span class="ed">✎</span></button><span class="date">${itemHint}${niceDate(e.date)}</span></div>
