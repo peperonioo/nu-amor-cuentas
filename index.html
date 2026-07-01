@@ -233,6 +233,7 @@
   <button class="btn ghost" onclick="openNew('debt')">+ Deuda</button>
 </div>
 <button class="btn ghost wide" onclick="openImport()">✨ Importar de texto o foto</button>
+<button class="btn ghost wide" onclick="openSync()"><span id="syncBadge">☁︎ Sincronizar en la nube</span></button>
 
 <div class="backup">
   <button class="lnk" onclick="shareData()">⬇︎ Guardar copia</button>
@@ -301,6 +302,18 @@
   </div>
 </dialog>
 
+<dialog id="dlgSync">
+  <h2>☁︎ Sincronizar</h2>
+  <p class="hint">Elige una <b>clave de sincronización</b> secreta y úsala igual en tus otros dispositivos para ver los mismos datos. Se cifra todo con ella: en la nube nadie puede leer tus cuentas. Si la olvidas, no se puede recuperar lo cifrado.</p>
+  <input id="sync_code_in" placeholder="Tu clave de sincronización" autocomplete="off">
+  <div id="sync_status" class="hint"></div>
+  <div class="dlg-actions">
+    <button class="btn cancel" onclick="dlgSync.close()">Cerrar</button>
+    <button class="btn" onclick="connectSync()">Conectar y sincronizar</button>
+  </div>
+  <button class="lnk" id="sync_disconnect" style="display:none" onclick="disconnectSync()">Desconectar este dispositivo</button>
+</dialog>
+
 <script>
 let entries = [];
 let introMode = false; // entrada escalonada solo en la primera carga
@@ -308,6 +321,7 @@ const dlgSale = document.getElementById("dlgSale");
 const dlgDebt = document.getElementById("dlgDebt");
 const dlgEdit = document.getElementById("dlgEdit");
 const dlgImport = document.getElementById("dlgImport");
+const dlgSync = document.getElementById("dlgSync");
 
 /* Diálogo propio (reemplaza prompt/confirm/alert, poco fiables en PWA iOS).
    askEdit → texto/número | askConfirm → sí/no | notify → solo aviso. */
@@ -443,7 +457,10 @@ const principal = e => e.type==="sale" ? e.items.reduce((a,i)=>a+(+i.price||0),0
 const paid = e => e.payments.reduce((a,p)=>a+(+p.amount||0),0);
 const balance = e => principal(e) - paid(e);
 
-function save(){ Store.set("entries", JSON.stringify(entries)); }
+function save(touch=true){
+  Store.set("entries", JSON.stringify(entries));
+  if(touch){ Store.set("data_updated", ""+Date.now()); scheduleSync(); }
+}
 
 // Devuelve siempre un array de entradas saneadas (tolera datos vacíos/corruptos).
 function normalize(data){
@@ -494,8 +511,9 @@ function load(){
     Store.set("seed_debts","1");
   }
 
-  save();
+  save(false); // no marca cambio ni sincroniza (solo persiste el estado cargado)
   render(true); // entrada escalonada en la primera carga
+  if(syncConfigured()) cloudSync(true); // baja cambios de la nube al abrir
 }
 
 function seedTristan(){
@@ -1094,9 +1112,139 @@ async function startEmpty(){
   save(); render();
 }
 
+/* ——— sincronización en la nube (Supabase) con cifrado de extremo a extremo ———
+   La anon key es pública por diseño; los datos se cifran con la clave del usuario
+   (AES-GCM) antes de subir, así en la nube solo hay texto ilegible. */
+const SUPABASE_URL = "https://szftnvsfmtpxqnlgsycu.supabase.co";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN6ZnRudnNmbXRweHFubGdzeWN1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI4NzkyNTAsImV4cCI6MjA5ODQ1NTI1MH0.m6wHdD-4TaUgIo8bh1CI97nOqvgXFVCI9jkPOPHn_wQ";
+const SB_HEADERS = { "apikey":SUPABASE_ANON, "Authorization":"Bearer "+SUPABASE_ANON, "Content-Type":"application/json" };
+
+let syncKey=null, syncing=false, syncTimer=null;
+function syncConfigured(){ return !!Store.get("sync_code"); }
+
+const _enc = new TextEncoder(), _dec = new TextDecoder();
+const _b64 = bytes => { let s=""; bytes.forEach(b=>s+=String.fromCharCode(b)); return btoa(s); };
+const _unb64 = str => Uint8Array.from(atob(str), c=>c.charCodeAt(0));
+async function deriveKey(code){
+  const base = await crypto.subtle.importKey("raw", _enc.encode(code), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name:"PBKDF2", salt:_enc.encode("finance-tracker-salt-v1"), iterations:100000, hash:"SHA-256" },
+    base, { name:"AES-GCM", length:256 }, false, ["encrypt","decrypt"]);
+}
+async function rowIdFor(code){
+  const buf = await crypto.subtle.digest("SHA-256", _enc.encode("ftid:"+code));
+  return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+async function encryptData(key, obj){
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, _enc.encode(JSON.stringify(obj))));
+  const out = new Uint8Array(12+ct.length); out.set(iv); out.set(ct,12);
+  return _b64(out);
+}
+async function decryptData(key, str){
+  const raw=_unb64(str), iv=raw.slice(0,12), ct=raw.slice(12);
+  const pt = await crypto.subtle.decrypt({name:"AES-GCM", iv}, key, ct);
+  return JSON.parse(_dec.decode(pt));
+}
+async function ensureKey(){
+  const code = Store.get("sync_code"); if(!code) return null;
+  if(!syncKey || syncKey.code!==code) syncKey = { code, key: await deriveKey(code), id: await rowIdFor(code) };
+  return syncKey;
+}
+async function sbGet(id){
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/cuentas?id=eq.${id}&select=data,updated_at`, {headers:SB_HEADERS});
+  if(!r.ok) throw new Error("GET "+r.status);
+  return (await r.json())[0] || null;
+}
+async function sbUpsert(id, dataStr, iso){
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/cuentas?on_conflict=id`, {
+    method:"POST", headers:{...SB_HEADERS, "Prefer":"resolution=merge-duplicates"},
+    body: JSON.stringify({ id, data:dataStr, updated_at:iso })
+  });
+  if(!r.ok) throw new Error("UPSERT "+r.status+" "+(await r.text()));
+}
+async function pushCloud(k){
+  const ts = (+Store.get("data_updated")) || Date.now();
+  const cipher = await encryptData(k.key, entries.map(({_open,...e})=>e));
+  await sbUpsert(k.id, cipher, new Date(ts).toISOString());
+  Store.set("data_updated", ""+ts);
+}
+async function pullCloud(k, row){
+  const data = await decryptData(k.key, row.data);
+  if(!Array.isArray(data)) throw new Error("bad");
+  entries = normalize(data);
+  Store.set("data_updated", ""+Date.parse(row.updated_at));
+  Store.set("entries", JSON.stringify(entries)); // persiste sin marcar cambio
+  render();
+}
+async function cloudSync(silent){
+  if(!syncConfigured() || !navigator.onLine || syncing) return;
+  syncing=true; setSyncStatus("Sincronizando…");
+  try{
+    const k = await ensureKey();
+    const row = await sbGet(k.id);
+    const localTime = (+Store.get("data_updated")) || 0;
+    const cloudTime = row ? Date.parse(row.updated_at) : 0;
+    if(row && cloudTime > localTime){ await pullCloud(k,row); setSyncStatus("⬇︎ Actualizado desde la nube"); }
+    else { await pushCloud(k); setSyncStatus("⬆︎ Guardado en la nube"); }
+    Store.set("sync_time", ""+Date.now());
+    updateSyncBadge();
+  }catch(e){
+    setSyncStatus(/operation|decrypt|bad/i.test(String(e.message)) ? "⚠︎ ¿Clave incorrecta?" : "⚠︎ Sin conexión con la nube");
+  }finally{ syncing=false; }
+}
+function scheduleSync(){ if(!syncConfigured()) return; clearTimeout(syncTimer); syncTimer=setTimeout(()=>cloudSync(true), 1500); }
+
+function setSyncStatus(t){ const el=document.getElementById("sync_status"); if(el) el.textContent=t; }
+function updateSyncBadge(){
+  const el=document.getElementById("syncBadge"); if(!el) return;
+  if(!syncConfigured()){ el.textContent="☁︎ Sincronizar en la nube"; return; }
+  const t=+Store.get("sync_time")||0;
+  el.innerHTML = t ? `☁︎ Nube activa ✓` : `☁︎ Nube (pulsa para sincronizar)`;
+}
+function openSync(){
+  document.getElementById("sync_code_in").value = Store.get("sync_code")||"";
+  document.getElementById("sync_disconnect").style.display = syncConfigured() ? "" : "none";
+  setSyncStatus(syncConfigured() ? "Conectado. Pulsa para sincronizar ahora." : "");
+  dlgSync.showModal();
+}
+async function connectSync(){
+  const code = (document.getElementById("sync_code_in").value||"").trim();
+  if(code.length<4){ setSyncStatus("Elige una clave de al menos 4 caracteres."); return; }
+  const firstTime = Store.get("sync_code")!==code || !Store.get("sync_time");
+  Store.set("sync_code", code); syncKey=null;
+  setSyncStatus("Conectando…");
+  try{
+    const k = await ensureKey();
+    const row = await sbGet(k.id);
+    // primera conexión con conflicto: hay datos en la nube Y aquí → preguntar
+    if(firstTime && row && entries.length){
+      const localTime=(+Store.get("data_updated"))||0, cloudTime=Date.parse(row.updated_at);
+      const pick = await askChoose("Ya hay datos en la nube y en este dispositivo. ¿Cuáles conservar?",
+        ["Los de este dispositivo","Los de la nube"], "Los de este dispositivo");
+      if(pick===null){ setSyncStatus("Cancelado."); return; }
+      if(pick==="Los de la nube"){ await pullCloud(k,row); setSyncStatus("⬇︎ Bajados de la nube"); }
+      else { Store.set("data_updated", ""+Math.max(localTime, cloudTime+1)); await pushCloud(k); setSyncStatus("⬆︎ Subidos a la nube"); }
+      Store.set("sync_time", ""+Date.now());
+    } else {
+      await cloudSync(true);
+    }
+    document.getElementById("sync_disconnect").style.display="";
+    updateSyncBadge();
+  }catch(e){ setSyncStatus(/operation|decrypt|bad/i.test(String(e.message)) ? "⚠︎ ¿Clave incorrecta?" : "⚠︎ No se pudo conectar"); }
+}
+function disconnectSync(){
+  Store.set("sync_code",""); localStorage.removeItem("sync_code");
+  Store.set("sync_time",""); localStorage.removeItem("sync_time");
+  syncKey=null; document.getElementById("sync_disconnect").style.display="none";
+  setSyncStatus("Desconectado de este dispositivo."); updateSyncBadge();
+}
+window.addEventListener("online", ()=>{ if(syncConfigured()) cloudSync(true); });
+
 // versión visible en la cabecera (subir junto con CACHE_VERSION en sw.js)
-const APP_VERSION = "v21";
+const APP_VERSION = "v22";
 document.getElementById("ver").textContent = APP_VERSION;
+updateSyncBadge();
 
 // poblar los desplegables de moneda (venta, deuda) con la lista
 document.querySelectorAll("select.cur-select").forEach(sel=>{
